@@ -30,58 +30,161 @@
 #          xmllink : URL of xml content if present
 #          csvlink  : URL of csv content if present
 #          ...
-#        [ ] fetch and parse the other pages?
+#        [ ] fetch and parse the 'other' pages?
 #        [ ] use urlib and beautiful soup to make this a proper scraper rather than wget and vim :D
 
 FILENAME =  ("/home/vegas/Documents/Projects" + #replace this absolute path 
              "/hackday/opengov/"              + #replace this absolute path
              "data/datatable.html")             #relative path for datafile
 
+from sqlalchemy import create_engine, Table, Column, Integer, String, MetaData, ForeignKey
 from BeautifulSoup import BeautifulSoup
+
+metadata       = MetaData()
+DB_FILENAME = ("/home/vegas/Documents/Projects"         + #replace this absolute path 
+                        "/hackday/opengov/"                      + #replace this absolute path
+                        "data/datatable.sqlite3")                  #relative path for datafile
+
+engine = create_engine('sqlite:///' + DB_FILENAME)
+metadata.bind = engine
+
+dataset_table = Table('datasets',metadata,
+    Column('id',Integer, primary_key=True),
+    Column('relUrl',     String, nullable=True),     
+    Column('relUrlName', String, nullable=True),  
+    Column('descr',      String, nullable=True),      
+    Column('agency',     String, nullable=True),     
+    Column('xmlurl',     String, nullable=True),     
+    Column('xmlsize',    String, nullable=True),    
+    Column('csvurl',     String, nullable=True),     
+    Column('csvsize',    String, nullable=True),    
+    Column('kmlurl',     String, nullable=True),     
+    Column('kmlsize',    String, nullable=True),    
+    Column('shapeurl',   String, nullable=True),   
+    Column('shapesize',  String, nullable=True),  
+    Column('mapsurl',    String, nullable=True),   
+    Column('otherurl',   String, nullable=True)
+)   
+
+metadata.create_all( engine )
+
 
 def parseLinkAndTextFromCol1(col):
     col = col.contents[0]
     link       = col.findAll('a')[0]
     relUrl     = link.get('href')
-    relUrlName = link.firstText()
+    relUrlName = "".join(link.contents)
     
     text = col.findAll('span')[0]
     text = text.contents[0]
     return {
              'relUrl'     : relUrl,
              'relUrlName' : relUrlName,
-             'text'       : text
+             'descr'       : text
            }
-
+def parseRatingFromCol2(col):
+    return {'rating' :  col.contents[0].get('alt') }
+def parseAgencyFromCol3(col):
+    return {'agency' :  col.contents[0]}
+def parseXMLInfoFromCol4(col):
+    a = col.findAll('a')
+    if len(a) > 0:
+        a = a[0]
+        return {
+            'xmlurl'  : a.get('href'),
+            'xmlsize' : a.contents[2].strip()
+            }
+    else:
+        return {}
+def parseCSVInfoFromCol5(col):
+    a = col.findAll('a')
+    if len(a) > 0:
+        a = a[0]
+        return {
+            'csvurl'  : a.get('href'),
+            'csvsize' : a.contents[2].strip()
+            }
+    else:
+        return {}
+def parseKMLInfoFromCol6(col):
+    a = col.findAll('a')
+    if len(a) > 0:
+        a = a[0]
+        return {
+            'kmlurl'  : a.get('href'),
+            'kmlsize' : a.contents[2].strip()
+            }
+    else:
+        return {}
+def parseShapeFromCol7(col):
+    a = col.findAll('a')
+    if len(a) > 0:
+        a = a[0]
+        return {
+            'shapeurl'  : a.get('href'),
+            'shapesize' : a.contents[2].strip()
+            }
+    else:
+        return {}
+def parseMapsFromCol8(col):
+    a = col.findAll('a')
+    if len(a) > 0:
+        a = a[0]
+        return {
+            'mapsurl'  : a.get('href'),
+            }
+    else:
+        return {}
+def parseOtherFromCol9(col):
+    a = col.findAll('a')
+    if len(a) > 0:
+        a = a[0]
+        return {
+            'otherurl'  : a.get('href'),
+            }
+    else:
+        return {}
 def parseCols(cols):
     '''Extract data and prep for insertion to db'''
     #import pdb
     #pdb.set_trace()
-    return parseLinkAndTextFromCol1(cols[0])
+    data = {}
+    data.update( parseLinkAndTextFromCol1(cols[0]))
+    data.update( parseRatingFromCol2( cols[1]) )
+    data.update( parseAgencyFromCol3( cols[2]) )
+    data.update( parseXMLInfoFromCol4( cols[3]) )
+    data.update( parseCSVInfoFromCol5( cols[4]) )
+    data.update( parseKMLInfoFromCol6( cols[5]) )
+    data.update( parseShapeFromCol7(  cols[6]) )
+    data.update( parseMapsFromCol8(   cols[7]) )
+    data.update( parseOtherFromCol9(  cols[8]) )
+    return data
 
+if __name__ == '__main__':
+    fh =  open(FILENAME)
+    strdata = "".join(fh.readlines())
+    soup = BeautifulSoup(strdata)
+    rows = soup.findAll("tr")
 
-
-fh =  open(FILENAME)
-strdata = "".join(fh.readlines())
-soup = BeautifulSoup(strdata)
-rows = soup.findAll("tr")
-
-parsed_data = []
-lineNo = 0 
-errno  = None
-for r in rows:
-    try:
-        cols = r.findAll("td")
-        if len(cols) == 9:
-            struct = parseCols(cols)
-            parsed_data.append(struct)
-        else:
+    parsed_data = []
+    lineNo = 0 
+    errno  = None
+    for r in rows:
+        try:
+            cols = r.findAll("td")
+            if len(cols) == 9:
+                data = parseCols(cols)
+                ins = dataset_table.insert().values(**data)
+                conn = engine.connect()
+                result = conn.execute(ins)
+                parsed_data.append(data)
+            else:
+                print "********************************************************************************"
+                print lineNo, " had nonstandard length"
+                print "********************************************************************************"
+        except Exception, e:
+            errno = e
             print "********************************************************************************"
-            print lineNo, " had nonstandard length"
+            print lineNo, " threw an exception"
             print "********************************************************************************"
-    except Exception, e:
-        errno = e
-        print "********************************************************************************"
-        print lineNo, " threw an exception"
-        print "********************************************************************************"
-    lineNo += 1
+        lineNo += 1
